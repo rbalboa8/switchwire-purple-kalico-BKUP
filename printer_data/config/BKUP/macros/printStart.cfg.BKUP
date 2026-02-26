@@ -1,0 +1,113 @@
+#####################################################################
+# Start Macro Definition
+#####################################################################
+# https://www.reddit.com/r/klippers/comments/yxarvy/it_is_possible_to_begin_a_job_if_above_start_temp/
+#SET_HEATER_TEMPERATURE HEATER=extruder TARGET={EXTRUDER_TEMP}
+#TEMPERATURE_WAIT SENSOR=extruder MINIMUM={EXTRUDER_TEMP} MAXIMUM={EXTRUDER_TEMP+5}
+
+[gcode_macro PRINT_START]
+gcode:
+    # Get parameters from slicer. Default CHAMBER to 0 if not provided.
+    {% set BED_TEMP = params.BED_TEMP|float %}
+    {% set EXTRUDER_TEMP = params.EXTRUDER_TEMP|float %}
+    {% set CHAMBER_TEMP = params.CHAMBER_TEMP|default(0)|float %}
+    {% set SOAK_TIME_MINUTES = 10 %}
+    {% set SOAK_TIME_MS = SOAK_TIME_MINUTES * 60 * 1000 %}
+    
+    # Check if a manual soak is already running
+    {% set manual_soak = printer["gcode_macro _SOAK_STATE_VARIABLES"].manual_soak_active %}
+    
+    status_off
+
+    G90 ;Absolute positioning
+    M220 S100 ;Reset Feedrate
+    M221 S100 ;Reset Flowrate
+    G92 E0 ;Reset Extruder
+
+    M117 Print Starting
+
+    M117 Homing...
+    
+    status_homing
+    
+    G28 ; Home all axes
+
+    G0 X0 Y0 F5000
+
+    G0 Z200 F5000
+    
+    status_heating
+
+    M117 Heating Bed...
+    M140 S{BED_TEMP} ; Set bed temp (no wait)
+    
+    # --- Chamber Preheat & Soak Logic ---
+    {% if CHAMBER_TEMP > 0 %}
+        {% if manual_soak %}
+            M117 Manual soak detected. Verifying temps...
+            BENTO_ON         ; Ensure fans are on
+            #CHAMBER_FAN_ON
+            SET_LED_EFFECT EFFECT=stauts_chamber_heating ; Ensure LEDs are red
+            M190 S{BED_TEMP} ; Wait for bed (might be ready)
+            TEMPERATURE_WAIT SENSOR=chamber MINIMUM={CHAMBER_TEMP} ; Wait for chamber (might be ready)
+            M117 Soak complete. Skipping dwell.
+            SET_GCODE_VARIABLE MACRO=_SOAK_STATE_VARIABLES VARIABLE=manual_soak_active VALUE=False ; Reset flag
+        {% else %}
+            M117 Preheating Chamber...
+            SET_LED_EFFECT EFFECT=chamber_heating ; <-- SET LEDS TO RED BREATHING
+            BENTO_ON
+            #CHAMBER_FAN_ON
+            M190 S{BED_TEMP} ; Wait for bed
+            M117 Waiting for Chamber: {CHAMBER_TEMP}C
+            TEMPERATURE_WAIT SENSOR=chamber MINIMUM={CHAMBER_TEMP}
+            M117 Soaking Chamber for {SOAK_TIME_MINUTES} min
+            G4 P{SOAK_TIME_MS} ; Dwell/Soak for X minutes
+            M117 Soak complete.
+        {% endif %}
+    {% else %}
+        ; --- Not preheating (PLA), set LEDs to printing state ---
+        status_printing ; <-- SET LEDS TO WHITE
+        BENTO_OFF
+        #CHAMBER_FAN_OFF
+        M190 S{BED_TEMP} ; Wait for bed
+    {% endif %}
+    
+    ################## Homing ##################
+    M117 Homing All...
+    # Clear Previous mesh
+    BED_MESH_CLEAR
+    G90 #(Absolute Coordinates)
+    #M83 #(Relative Extrusion)
+    status_homing
+    G28 #(Home All Axis)
+    
+    M117 Generating mesh...
+    
+    status_meshing
+    
+    ; --- Add your bed mesh/probing commands here ---
+    BED_MESH_CALIBRATE PROFILE=default ADAPTIVE=1
+    
+    G0 X0 Y0 F10000
+   
+    M117 Heating Hotend...
+    M109 S{EXTRUDER_TEMP} ; Set hotend temp and wait 
+    
+    {% if CHAMBER_TEMP > 0 %}
+        SET_LED_EFFECT EFFECT=printing ; <-- SET LEDS TO WHITE (if they were red)
+    {% endif %}
+    
+    #setup skew correction
+    SKEW_PROFILE LOAD=Calilantern
+    M117 Skew Profile Loaded
+    
+    status_printing
+        
+    M117 Purging...
+    ; --- Add your purge line commands here ---
+    VORON_PURGE
+        
+    M117 Print Starting!
+
+    M117 Printing...
+    UPDATE_DELAYED_GCODE ID=clear_display DURATION=10

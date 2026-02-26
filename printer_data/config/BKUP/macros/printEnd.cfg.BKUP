@@ -1,0 +1,46 @@
+#####################################################################
+# End Macro Definition
+#####################################################################
+
+#[gcode_macro PRINT_END]
+#gcode:
+    #SAVE_GCODE_STATE NAME=STATE_PRINT_END
+    #G92 E0                         ; zero the extruder
+    # move z up
+    #G91
+    #G0 X{th.axis_maximum.x//2} Y{th.axis_maximum.y - 2} F3600  ; park nozzle at rear
+    #AFTER_PRINT_CLEAN_NOZZLE
+    # Clear Pressure Advance
+    #Clear skew correction
+    #SKEW_PROFILE CLEAR=my_skew_profile
+    #UPDATE_DELAYED_GCODE ID=clear_display DURATION=10
+    #RESTORE_GCODE_STATE NAME=STATE_PRINT_END
+
+[gcode_macro PRINT_END]
+gcode:
+    # safe anti-stringing move coords
+    {% set th = printer.toolhead %}
+    {% set x_safe = th.position.x + 20 * (1 if th.axis_maximum.x - th.position.x > 20 else -1) %}
+    {% set y_safe = th.position.y + 20 * (1 if th.axis_maximum.y - th.position.y > 20 else -1) %}
+    {% set z_safe = [th.position.z + 2, th.axis_maximum.z]|min %}
+    # Wait for buffer to clear
+    M400
+    status_part_ready
+    M104 S0 ; Turn off hotend
+    M140 S0 ; Turn off bed
+    M107    ; Turn off part cooling fan
+    BENTO_OFF ; Turn off bento box
+    #CHAMBER_FAN_OFF ; Turn off chamber fan
+    G91     ; Relative positioning
+    G1 E-1 Z+5 F3000 ; Move Z up
+    SET_SKEW CLEAR=1
+    G90     ; Absolute positioning
+    G0 X{x_safe} Y{y_safe} Z{z_safe} F20000  ; move nozzle to remove stringing
+    G0 X{th.axis_maximum.x -2} Y{th.axis_maximum.y - 2} F3600  ; park nozzle at rear
+    M84 X Y Z E ;Disable motors     ; Disable steppers
+    SET_PRESSURE_ADVANCE ADVANCE=0.0
+    M117 Pressure Advance Set 0.0
+    
+    BED_MESH_CLEAR
+    #Print Finished Message
+    M117 Print Complete.
